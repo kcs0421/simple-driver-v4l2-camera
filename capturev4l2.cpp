@@ -11,22 +11,22 @@
 
 #include "capturev4l2.hpp"
 
+#define BUF 2
+
 static int xioctl(int fd, int request, void *arg)
 {
     int r;
 
-    do r = ioctl (fd, request, arg);
-    while (-1 == r && EINTR == errno);
+    do {
+        r = ioctl (fd, request, arg);
+    } while (-1 == r && EINTR == errno);
 
     return r;
 }
 
-
-CaptureV4L2::CaptureV4L2(std::string device, int shift){
-    if(open_camera(device))
+CaptureV4L2::CaptureV4L2(){ 
+    if(open_camera())
         return;
-
-    shift_ = shift;
 }
 
 int CaptureV4L2::print_caps()
@@ -34,63 +34,33 @@ int CaptureV4L2::print_caps()
     struct v4l2_capability caps = {};
     if (-1 == xioctl(fd_, VIDIOC_QUERYCAP, &caps))
     {
-            perror("Querying Capabilities");
-            return 1;
+        perror("Querying Capabilities");
+        return 1;
     }
 
     printf( "Driver Caps:\n"
-            "  Driver: \"%s\"\n"
-            "  Card: \"%s\"\n"
-            "  Bus: \"%s\"\n"
-            "  Version: %d.%d\n"
-            "  Capabilities: %08x\n",
-            caps.driver,
+            "  Name: \"%s\"\n"
+            "  Driver: \"%s\"\n",
+            // "  Bus: \"%s\"\n"
+            // "  Version: %d.%d\n"
+            // "  Capabilities: %08x\n",
             caps.card,
-            caps.bus_info,
-            (caps.version>>16)&&0xff,
-            (caps.version>>24)&&0xff,
-            caps.capabilities);
+            caps.driver);
+            // caps.bus_info,
+            // (caps.version>>16)&&0xff,
+            // (caps.version>>24)&&0xff,
+            // caps.capabilities);
 
+    return 0;
+}
 
-    struct v4l2_cropcap cropcap = {0};
-    cropcap.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    if (-1 == xioctl (fd_, VIDIOC_CROPCAP, &cropcap))
-    {
-            perror("Querying Cropping Capabilities");
-            return 1;
-    }
-
-    printf( "Camera Cropping:\n"
-            "  Bounds: %dx%d+%d+%d\n"
-            "  Default: %dx%d+%d+%d\n"
-            "  Aspect: %d/%d\n",
-            cropcap.bounds.width, cropcap.bounds.height, cropcap.bounds.left, cropcap.bounds.top,
-            cropcap.defrect.width, cropcap.defrect.height, cropcap.defrect.left, cropcap.defrect.top,
-            cropcap.pixelaspect.numerator, cropcap.pixelaspect.denominator);
-
-    int support_grbg10 = 0;
-
-    struct v4l2_fmtdesc fmtdesc = {0};
-    fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    char fourcc[5] = {0};
-    char c, e;
-    printf("  FMT : CE Desc\n--------------------\n");
-    while (0 == xioctl(fd_, VIDIOC_ENUM_FMT, &fmtdesc))
-    {
-            strncpy(fourcc, (char *)&fmtdesc.pixelformat, 4);
-            if (fmtdesc.pixelformat == V4L2_PIX_FMT_SGRBG10)
-                support_grbg10 = 1;
-            c = fmtdesc.flags & 1? 'C' : ' ';
-            e = fmtdesc.flags & 2? 'E' : ' ';
-            printf("  %s: %c%c %s\n", fourcc, c, e, fmtdesc.description);
-            fmtdesc.index++;
-    }
-
+int CaptureV4L2::set_pix_fmt()
+{
     struct v4l2_format fmt = {0};
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width = cropcap.bounds.width;
-    fmt.fmt.pix.height = cropcap.bounds.height;
-    fmt.fmt.pix.pixelformat = fmtdesc.pixelformat;
+    fmt.fmt.pix.width = 1920;
+    fmt.fmt.pix.height = 1080;
+    fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_UYVY;
     fmt.fmt.pix.field = V4L2_FIELD_NONE;
     
     if (-1 == xioctl(fd_, VIDIOC_S_FMT, &fmt))
@@ -99,23 +69,26 @@ int CaptureV4L2::print_caps()
         return 1;
     }
 
+    char fourcc[5] = {0};
+
     strncpy(fourcc, (char *)&fmt.fmt.pix.pixelformat, 4);
     printf( "Selected Camera Mode:\n"
             "  Width: %d\n"
             "  Height: %d\n"
-            "  PixFmt: %s\n"
-            "  Field: %d\n",
+            "  PixFmt: %s\n",
+            // "  Field: %d\n",
             fmt.fmt.pix.width,
             fmt.fmt.pix.height,
-            fourcc,
-            fmt.fmt.pix.field);
+            fourcc);
+            // fmt.fmt.pix.field);
+
     return 0;
 }
 
 int CaptureV4L2::init_mmap()
 {
     struct v4l2_requestbuffers req = {0};
-    req.count = 1;
+    req.count = BUF;
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = V4L2_MEMORY_MMAP;
  
@@ -142,7 +115,10 @@ int CaptureV4L2::init_mmap()
       printf("Failed mapping device memory");
       return 1;
     }
-    printf("Length: %d\nAddress: %p\n", buf.length, buffer_.start);
+    printf("Length(file size): %d\n",
+        // "Address: %p\n",
+        buf.length);
+        // buffer_.start);
  
     return 0;
 }
@@ -155,7 +131,7 @@ int CaptureV4L2::capture_image()
     buf.index = 0;
     if(-1 == xioctl(fd_, VIDIOC_QBUF, &buf))
     {
-        perror("Query Buffer");
+        perror("Queue Buffer");
         return 1;
     }
  
@@ -182,34 +158,13 @@ int CaptureV4L2::capture_image()
         perror("Retrieving Frame");
         return 1;
     }
-    printf("Image sucessfully captured\nImage Length: %d\n", buf.bytesused);
+    printf("Image successfully captured\n");
  
     return 0;
 }
 
-int CaptureV4L2::process_buffer(const void *p){
-
-    unsigned char tmp;
-    unsigned short *src_short = (unsigned short *)p;
-    unsigned char *dst = (unsigned char *)p;
-    unsigned short ts;
-
-    if(shift_!=0){
-#pragma omp for nowait
-        for (size_t i = 0; i < 1928; i++)
-        {
-            for (size_t j = 0; j < 3840; j++)
-            {
-                ts = *(src_short++);
-                tmp = ts >> shift_;
-                *(dst++) = (unsigned char)tmp;
-            }
-        }
-    }
-    return 0;
-}
-
-int CaptureV4L2::save_img(){
+int CaptureV4L2::save_img()
+{
     FILE * pFile = fopen ("image.raw", "wb");
     if(pFile==NULL){
         perror("ERROR: Cannot open output file");
@@ -217,69 +172,61 @@ int CaptureV4L2::save_img(){
     } 
     fwrite((const int *)buffer_.start , sizeof(char), buffer_.length, pFile);
     fclose(pFile);
-    printf("Raw Image sucessfully saved with name image.raw\n");
+    printf("Raw Image successfully saved with name image.raw\n");
+
     return 0;
 }
 
-int CaptureV4L2::open_camera(std::string device){
-    fd_ = open(device.c_str(), O_RDWR);
+int CaptureV4L2::open_camera()
+{
+    fd_ = open("/dev/video0", O_RDWR);
     if (fd_ == -1)
     {
         perror("Opening video device");
         //return 1;
     }
-    printf("Sucessfuly open device %s.\n", device.c_str());
-    return 0;
+    else {
+        printf("Successfully open device\n");
+    }
 
+    return 0;
 }
 
-void CaptureV4L2::close_camera(){
+int CaptureV4L2::stop_stream()
+{
+    struct v4l2_buffer buf = {0};
+    buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+    if(-1 == xioctl(fd_, VIDIOC_STREAMOFF, &buf.type))
+    {
+        perror("Stop Capture");
+        return 1;
+    }
+
+    return 0;
+}
+
+void CaptureV4L2::close_camera()
+{
     close(fd_);
 }
 
 void CaptureV4L2::run(){
-    if(print_caps())
-        return;
-
-    if(init_mmap())
-        return;
-
-    if(capture_image())
-        return;
-
-    if(process_buffer((const void *)buffer_.start))
-        return;	
-
-    if(save_img())
-        return;
-
+    print_caps();
+    set_pix_fmt();
+    init_mmap();
+    capture_image();
+    // process_buffer((const void *)buffer_.start);
+    save_img();
+    stop_stream();
     close_camera();
-
 }
 
 int main(int argc, char** argv)
 {
-    int videoNumber = 0;
-    int shift=0;
-    if(argc==2)
-        videoNumber = *argv[1];
-    
-    else if(argc==3){
-        videoNumber = (int)*argv[1]-48;
-        if(std::string(argv[2]).compare(std::string("RAW8")))
-            shift = 0;
-        else if(std::string(argv[2]).compare(std::string("RAW10")))
-            shift = 2;
-        else if(std::string(argv[2]).compare(std::string("RAW12")))
-            shift = 4;
-        else{
-            perror("Wrong image format, you can choose RAW8, RAW10 or RAW12\n");
-            return 1;
-        }
-    }
-
-    CaptureV4L2 capture_v4l2(std::string("/dev/video"+std::string(std::to_string(videoNumber))).c_str(), shift);
+    CaptureV4L2 capture_v4l2;
 
     capture_v4l2.run();
+
     return 0;
 }

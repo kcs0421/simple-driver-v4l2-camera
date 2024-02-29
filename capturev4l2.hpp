@@ -8,7 +8,7 @@
 class CaptureV4L2
 {
     public:
-      explicit CaptureV4L2(std::string device, int shift);
+        CaptureV4L2();
         void run();
 
     private:
@@ -24,15 +24,16 @@ class CaptureV4L2
         Buffer buffer_;
 
         int fd_;
-        int shift_;
 
         // functions
-        int open_camera(std::string device);
+        int open_camera();
         int print_caps();
+        int set_pix_fmt();
         int init_mmap();
         int capture_image();
         int process_buffer(const void *p);
         int save_img();
+        int stop_stream();
         void close_camera();
 
 };
